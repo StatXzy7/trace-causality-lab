@@ -1,3 +1,97 @@
-# trace-causality-lab
+# trace_studio
 
-# trace-causality-lab  Initial repository for this project.  No implementation has been added yet. Use Python, HTML, JavaScript.
+本地**单次调用追踪诊断**网页：解释一次调用里父子操作的时间关系，快速定位
+错误记录与耗时归属。它不是通用日志看板，没有外部依赖——仅使用 **Python 标准库**
+与**浏览器原生能力**（无 npm、无框架、无 CDN）。
+
+## 启动
+
+```bash
+python -m trace_studio            # 端口 0：自动分配空闲端口并打印实际地址
+python -m trace_studio --port 8000
+python -m trace_studio --host 127.0.0.1 --port 0
+```
+
+启动后控制台打印，例如：
+
+```
+trace_studio 运行中: http://127.0.0.1:8082
+```
+
+浏览器打开该地址即可。服务仅绑定本机回环地址。
+
+## 运行测试
+
+```bash
+python -m unittest               # 自动发现 tests/ 下全部用例
+python -m unittest discover -s tests -v
+```
+
+## 输入格式
+
+导入一个 JSON 数组（或 `{"records": [...]}`），每条记录字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `traceId` | string，必填 | 追踪编号；**不同追踪即使 spanId 相同也绝不串联** |
+| `spanId` | string，必填 | 追踪内唯一的跨度编号 |
+| `parentSpanId` | string \| null | 直接父跨度编号；`null`/缺省为根 |
+| `name` | string，必填 | 操作名 |
+| `startMs` / `endMs` | number，必填 | 起止毫秒时间，必须有限且 `endMs >= startMs` |
+| `error` / `isError` / `status` | 可选 | `error:true`、`isError:true` 或 `status:"error"` 标记错误记录 |
+
+其他任意额外字段（如 `service`、`errorMessage`）原样保留并随修正副本导出。
+
+## 功能与判定规则
+
+- **调用树恢复**：按 `traceId` 分组重建父子树；支持多个根。
+- **可缩放时间轴**：原生 SVG 绘制，`Ctrl/⌘ + 滚轮`以光标为锚点缩放，拖拽平移，
+  零时长跨度用菱形标记保证可见，错误跨度红色高亮。
+- **点击节点**查看：原始记录（未修改的导入内容）、直接子调用列表、
+  总时长 / 子覆盖 / **自身耗时**。
+- **自身耗时**：
+  `自身耗时 = 父跨度时长 − 直接子跨度在父范围内总覆盖时间`，
+  覆盖时间按区间**并集**计算——并行子调用的重叠部分只扣一次；
+  孙跨度不直接参与祖父的扣减；零时长子跨度无贡献。
+- **孤立跨度**：父记录在同追踪内缺失时，该跨度标记为“孤立”，
+  **不会虚构父节点数据**；它仍可拥有自己的子树。
+- **超出父范围**：子跨度超出父区间时**保留原始时间**并提示异常；
+  覆盖只计算落在父范围内的交集部分。
+- **修正**：可在页面修改单条记录的 `startMs` / `endMs` / `parentSpanId`，
+  应用后重新检查并更新树与耗时；原始输入永不改变。
+  - 修正导致结束早于开始、非有限时间或父子循环时会被**拒绝**，当前数据不变；
+  - 把父改成其它追踪的编号会解析失败 → 该跨度变为孤立（追踪不串联）。
+- **撤销**：修正按 LIFO 历史栈撤销。
+- **导出修正副本**：下载当前有效记录，外加 `corrections` 修正元数据；
+  导出内容可再次导入。
+- **导入拒绝时保留此前有效工作**：以下情况整批拒绝，页面已有数据不受影响：
+  JSON 非法、非数组、字段缺失/类型错误、`endMs < startMs`、非有限时间、
+  `(traceId, spanId)` 相同但内容冲突、循环父关系。
+- **完全相同的重复记录**（忽略键序）自动合并；空数组/空状态在页面明确显示为空。
+
+## 内置样例
+
+点击“载入内置样例”，包含两个追踪：
+
+- `T-1000` 结算管线：并行重叠子调用（`w1 [40,70)` 与 `w2 [50,80)`）、
+  零时长跨度、错误记录、缺失父记录的孤立跨度；
+- `T-2000`：复用 `r1`/`a1` 编号（验证跨追踪隔离），以及超出父范围的子跨度。
+
+## 架构
+
+```
+trace_studio/
+├── __main__.py     # python -m trace_studio / --port / --host
+├── server.py       # http.server：静态页面 + JSON API
+├── model.py        # RawSpan / Issue / 异常码（不可变值对象）
+├── parser.py       # 导入校验、重复合并、冲突与循环拒绝
+├── tree.py         # 调用林恢复、区间并集覆盖、自身耗时
+├── corrections.py  # 单条修正校验与不可变派生
+├── store.py        # 原始记录 + 修正历史 + 派生状态（锁保护）
+├── sample.py       # 内置样例
+└── web/            # index.html / app.js / style.css（原生，无构建）
+tests/              # unittest：断言调用关系与具体耗时数值
+```
+
+核心时间逻辑全部在 Python 侧，因此测试可以对自身耗时、覆盖时间和树关系做
+精确数值断言，而不只是检查页面响应。

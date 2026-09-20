@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>trace_studio — 单次调用追踪诊断</title>
+  <link rel="stylesheet" href="/web/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>trace_studio</h1>
+    <span class="subtitle">父子时序 · 错误定位 · 自身耗时归属</span>
+    <div class="header-stats" id="header-stats"></div>
+  </header>
+
+  <div class="toolbar">
+    <button class="btn primary" id="btn-sample">载入内置样例</button>
+    <button class="btn" id="btn-import">导入 JSON…</button>
+    <button class="btn" id="btn-export">导出修正副本</button>
+    <button class="btn" id="btn-undo" disabled>↩ 撤销修正</button>
+    <button class="btn danger" id="btn-clear">清空</button>
+    <span class="spacer"></span>
+    <span class="toolbar-hint">滚轮缩放 · 拖拽平移 · 点击跨度查看详情</span>
+  </div>
+
+  <div class="messages" id="messages"></div>
+
+  <main class="workspace" id="workspace">
+    <div class="empty-state" id="empty-state">
+      <div class="big">当前为空 — 尚未导入任何追踪记录</div>
+      <div class="small">
+        点击 <code>载入内置样例</code> 立即体验（含并行子调用、孤立跨度、零时长与错误记录），
+        或点击 <code>导入 JSON…</code> 粘贴一个记录数组。每条记录需要
+        <code>traceId / spanId / parentSpanId / name / startMs / endMs</code>。
+      </div>
+    </div>
+
+    <section class="pane hidden" id="tree-pane">
+      <h2 class="pane-title">调用树（按追踪隔离）</h2>
+      <div id="tree-root"></div>
+    </section>
+
+    <section class="pane hidden" id="timeline-pane">
+      <div class="zoom-bar">
+        <button class="btn" id="zoom-in">＋</button>
+        <button class="btn" id="zoom-out">－</button>
+        <button class="btn" id="zoom-reset">重置视图</button>
+        <span class="zoom-range-info" id="zoom-info"></span>
+      </div>
+      <div class="timeline-scroll" id="timeline-scroll">
+        <div id="timeline-root"></div>
+      </div>
+    </section>
+
+    <section class="pane hidden" id="detail-pane">
+      <h2 class="pane-title">跨度详情</h2>
+      <div class="detail-empty" id="detail-empty">
+        在左侧调用树或时间轴中点击一个跨度节点，查看：
+        <ul>
+          <li>原始记录（未修改的导入内容）</li>
+          <li>直接子调用列表</li>
+          <li>总时长 / 子覆盖 / 自身耗时</li>
+          <li>时间或父关系修正（可撤销、可导出）</li>
+        </ul>
+      </div>
+      <div id="detail-root" class="hidden"></div>
+    </section>
+  </main>
+
+  <!-- 导入对话框 -->
+  <dialog id="import-dialog">
+    <form method="dialog" class="corr-form" id="import-drop">
+      <h3 style="margin:0;font-family:var(--mono);font-size:13px;color:var(--accent)">
+        导入追踪记录
+      </h3>
+      <label>
+        JSON 数组（也可用顶层 {"records": [...]}）
+        <textarea id="import-text" rows="14" cols="72" spellcheck="false"
+          style="background:#0d1117;border:1px solid var(--border-strong);color:var(--text);
+                 border-radius:4px;padding:8px;font-family:var(--mono);font-size:12px;"></textarea>
+      </label>
+      <label style="grid-template-columns:auto 1fr;display:flex;gap:8px;align-items:center">
+        <input type="file" id="import-file" accept=".json,application/json" />
+        <span class="toolbar-hint">或选择本地 JSON 文件</span>
+      </label>
+      <div class="corr-actions">
+        <button class="btn primary" value="import" type="button" id="import-confirm">导入</button>
+        <button class="btn" value="cancel" type="button" id="import-cancel">取消</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="svg-tooltip" id="tooltip"></div>
+
+  <script src="/web/app.js"></script>
+</body>
+</html>
