@@ -1,3 +1,80 @@
-# trace-causality-lab
+# Trace Studio · 本地追踪诊断
 
-# trace-causality-lab  Initial repository for this project.  No implementation has been added yet. Use Python, HTML, JavaScript.
+一个**只针对单次调用内部父子时间关系**的本地诊断网页：恢复调用树、画可缩放时间轴、
+定位错误记录、并把父跨度的耗时拆成「自身耗时 vs 子调用覆盖」。它不是通用日志看板。
+
+- 仅依赖 **Python 标准库**（http.server）与**浏览器原生能力**（零构建、零前端框架）。
+- 在 Windows 本地运行：`python -m trace_studio --port 0`。
+
+## 启动
+
+```powershell
+# 在仓库根目录
+python -m trace_studio            # --port 默认 0：系统分配端口，启动后打印实际地址
+python -m trace_studio --port 8000
+python -m trace_studio --host 127.0.0.1 --port 0
+```
+
+启动后会打印形如 `http://127.0.0.1:53124` 的地址，浏览器打开即可。
+页面上可「载入内置样例」，样例内置了并行重叠子调用、缺失父记录、错误、零时长跨度，
+以及两个复用相同 span_id 的不同 trace。
+
+## 输入格式
+
+JSON 数组，或 `{"records": [...]}`。每条记录字段：
+
+| 字段 | 含义 |
+|---|---|
+| `trace_id` | 追踪编号（非空字符串/数字） |
+| `span_id` | 跨度编号（同一 trace 内唯一） |
+| `parent_span_id` | 父跨度编号；`null`/`""`/缺省表示根 |
+| `name` | 跨度名称 |
+| `start_ms` / `end_ms` | 起止毫秒时间，必须是有限数字，允许相等（零时长） |
+
+可选 `is_error: true` 与 `error: "..."` 用于标记错误记录。
+
+## 语义约定
+
+- **跨 trace 隔离**：身份是 `(trace_id, span_id)`。不同 trace 即使 span_id 完全相同，
+  也绝不会被串联。
+- **自身耗时** = 父跨度时长 − 直接子跨度在父时间范围内的**合并覆盖时间**。
+  并行/重叠子调用先求区间并集再扣减，重叠部分不重复扣；孙跨度不直接扣祖父。
+  子跨度超出父范围时，覆盖只在父范围内裁剪计算，**原始时间保留不改**并给出异常提示。
+- **孤立跨度**：父记录缺失时不虚构任何父节点，单独列在「孤立跨度」分区并在时间轴用
+  斜纹样式标出。
+- **零时长跨度**：正常展示（时间轴上以菱形标记）。
+- **重复与冲突**：整条完全相同的记录自动合并；同 trace 同 span_id 但内容冲突则**整体拒绝**。
+- **拒绝类错误**：循环父关系、`end_ms < start_ms`、非有限时间、字段缺失/类型错误，
+  以及修正后重新检查失败 —— 一律拒绝并**保留此前有效工作**（已有树与数据不变）。
+- **修正**：可在页面修改单条记录的 span_id / parent / 起止时间，服务端重新全量校验后
+  重建树与耗时；修正逐条压栈，可**撤销**，可**导出修正副本**（含修正日志）。
+  原始导入输入永不改变；不允许把父指向其他 trace 的跨度。
+- **空输入**：导入 `[]` 会明确进入「空」状态并显示空态提示。
+
+## 测试
+
+纯 `unittest`，对调用关系与具体耗时数值做断言（不只是检查页面响应），
+服务层测试对真实监听端口发 HTTP 请求，覆盖导入/修正/撤销/导出全链路。
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+覆盖内容：并行/重叠覆盖时间、嵌套不重复扣减、越界裁剪、孤立跨度不虚构父节点、
+跨 trace 同 id 隔离、循环与冲突记录拒绝、非法时间拒绝、重复合并、空输入、
+修正-撤销 LIFO、修正失败状态保留、导出副本与原始输入不可变等。
+
+## 代码结构
+
+```
+trace_studio/
+├── __init__.py
+├── __main__.py     # python -m trace_studio，--port/--host
+├── model.py        # 纯领域逻辑：校验、建树、覆盖时间、修正、导出
+├── samples.py      # 内置样例
+├── server.py       # 标准库 HTTP 服务 + JSON API
+└── frontend.py     # 内嵌单页（HTML/CSS/原生 JS）
+tests/
+├── test_model.py   # 领域逻辑（具体关系与耗时断言）
+└── test_server.py  # 真实 HTTP 端到端
+```
